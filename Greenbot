@@ -1,6 +1,7 @@
-const express = require('express');
+    const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,10 +9,10 @@ const PORT = process.env.PORT || 3000;
 // Função para buscar os jogos do dia
 async function fetchGamesOfTheDay() {
     try {
-        const response = await axios.get(`https://api-futebol.com.br/v1/games/today`, {
+        const response = await axios.get('https://api-futebol.com.br/v1/games/today', {
             headers: {
-                'Authorization': `Bearer ${process.env.API_KEY}`
-            }
+                'Authorization': `Bearer ${process.env.API_KEY}`,
+            },
         });
         return response.data;
     } catch (error) {
@@ -25,8 +26,8 @@ async function fetchTeamStats(teamId) {
     try {
         const response = await axios.get(`https://api-futebol.com.br/v1/teams/${teamId}/matches`, {
             headers: {
-                'Authorization': `Bearer ${process.env.API_KEY}`
-            }
+                'Authorization': `Bearer ${process.env.API_KEY}`,
+            },
         });
         return response.data.slice(0, 10); // Pegando apenas os últimos 10 jogos
     } catch (error) {
@@ -35,12 +36,12 @@ async function fetchTeamStats(teamId) {
     }
 }
 
-// Endpoint para obter as apostas recomendadas
-app.get('/recommendations', async (req, res) => {
+// Função para gerar as apostas recomendadas
+async function generateRecommendations() {
     const games = await fetchGamesOfTheDay();
 
     if (games.length === 0) {
-        return res.status(404).json({ message: 'Nenhum jogo encontrado hoje.' });
+        return [];
     }
 
     const recommendations = [];
@@ -49,20 +50,75 @@ app.get('/recommendations', async (req, res) => {
         const homeTeamStats = await fetchTeamStats(game.home_team.id);
         const awayTeamStats = await fetchTeamStats(game.away_team.id);
 
-        // Análise de apostas com base nas estatísticas (exemplo simples)
-        const over2_5Goals = (homeTeamStats.length && awayTeamStats.length) &&
+        // Análise de apostas com base nas estatísticas
+        const over2_5Goals = homeTeamStats.length && awayTeamStats.length &&
             (homeTeamStats.reduce((acc, match) => acc + match.goals_scored, 0) / homeTeamStats.length > 1.5) &&
             (awayTeamStats.reduce((acc, match) => acc + match.goals_scored, 0) / awayTeamStats.length > 1.5);
 
+        const over1_5Goals = homeTeamStats.length && awayTeamStats.length &&
+            (homeTeamStats.reduce((acc, match) => acc + match.goals_scored, 0) / homeTeamStats.length > 1.5) &&
+            (awayTeamStats.reduce((acc, match) => acc + match.goals_scored, 0) / awayTeamStats.length > 1.5);
+
+        const bothTeamsToScore = homeTeamStats.length && awayTeamStats.length &&
+            homeTeamStats.some(match => match.goals_scored > 0) && awayTeamStats.some(match => match.goals_scored > 0);
+
+        // Adicionar recomendações baseadas nas análises
         if (over2_5Goals) {
             recommendations.push({
                 game: `${game.home_team.name} vs ${game.away_team.name}`,
-                bet: 'Mais de 2.5 gols'
+                bet: 'Mais de 2.5 gols',
+                homeStats: homeTeamStats,
+                awayStats: awayTeamStats,
+            });
+        }
+
+        if (over1_5Goals) {
+            recommendations.push({
+                game: `${game.home_team.name} vs ${game.away_team.name}`,
+                bet: 'Mais de 1.5 gols',
+                homeStats: homeTeamStats,
+                awayStats: awayTeamStats,
+            });
+        }
+
+        if (bothTeamsToScore) {
+            recommendations.push({
+                game: `${game.home_team.name} vs ${game.away_team.name}`,
+                bet: 'Ambas as equipes marcam',
+                homeStats: homeTeamStats,
+                awayStats: awayTeamStats,
             });
         }
     }
 
-    return res.json(recommendations);
+    return recommendations;
+}
+
+// Endpoint para obter as apostas recomendadas
+app.get('/recommendations', async (req, res) => {
+    try {
+        const recommendations = await generateRecommendations();
+
+        if (recommendations.length === 0) {
+            return res.status(404).json({ message: 'Nenhuma recomendação encontrada para hoje.' });
+        }
+
+        return res.json(recommendations);
+    } catch (error) {
+        console.error('Erro ao gerar recomendações:', error);
+        return res.status(500).json({ message: 'Erro ao gerar recomendações.' });
+    }
+});
+
+// Agendar a análise de apostas para rodar automaticamente a cada hora
+cron.schedule('0 * * * *', async () => {
+    try {
+        console.log('Iniciando análise automática...');
+        const recommendations = await generateRecommendations();
+        console.log('Recomendações atualizadas:', recommendations);
+    } catch (error) {
+        console.error('Erro na análise automática:', error);
+    }
 });
 
 // Iniciar o servidor
