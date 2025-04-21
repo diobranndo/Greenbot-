@@ -1,0 +1,71 @@
+const express = require('express');
+const axios = require('axios');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Função para buscar os jogos do dia
+async function fetchGamesOfTheDay() {
+    try {
+        const response = await axios.get(`https://api-futebol.com.br/v1/games/today`, {
+            headers: {
+                'Authorization': `Bearer ${process.env.API_KEY}`
+            }
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Erro ao buscar jogos do dia:', error);
+        return [];
+    }
+}
+
+// Função para buscar as estatísticas dos últimos 10 jogos de um time
+async function fetchTeamStats(teamId) {
+    try {
+        const response = await axios.get(`https://api-futebol.com.br/v1/teams/${teamId}/matches`, {
+            headers: {
+                'Authorization': `Bearer ${process.env.API_KEY}`
+            }
+        });
+        return response.data.slice(0, 10); // Pegando apenas os últimos 10 jogos
+    } catch (error) {
+        console.error('Erro ao buscar estatísticas do time:', error);
+        return [];
+    }
+}
+
+// Endpoint para obter as apostas recomendadas
+app.get('/recommendations', async (req, res) => {
+    const games = await fetchGamesOfTheDay();
+
+    if (games.length === 0) {
+        return res.status(404).json({ message: 'Nenhum jogo encontrado hoje.' });
+    }
+
+    const recommendations = [];
+
+    for (const game of games) {
+        const homeTeamStats = await fetchTeamStats(game.home_team.id);
+        const awayTeamStats = await fetchTeamStats(game.away_team.id);
+
+        // Análise de apostas com base nas estatísticas (exemplo simples)
+        const over2_5Goals = (homeTeamStats.length && awayTeamStats.length) &&
+            (homeTeamStats.reduce((acc, match) => acc + match.goals_scored, 0) / homeTeamStats.length > 1.5) &&
+            (awayTeamStats.reduce((acc, match) => acc + match.goals_scored, 0) / awayTeamStats.length > 1.5);
+
+        if (over2_5Goals) {
+            recommendations.push({
+                game: `${game.home_team.name} vs ${game.away_team.name}`,
+                bet: 'Mais de 2.5 gols'
+            });
+        }
+    }
+
+    return res.json(recommendations);
+});
+
+// Iniciar o servidor
+app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+});
